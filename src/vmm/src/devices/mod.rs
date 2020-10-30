@@ -3,6 +3,8 @@
 
 #![cfg(target_arch = "x86_64")]
 
+mod block;
+
 use std::convert::TryInto;
 use std::io::{stdin, Read, Write};
 

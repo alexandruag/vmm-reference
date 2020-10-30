@@ -12,6 +12,7 @@ linux-loader = "0.2.0"
 vm-device = { git = "https://github.com/aghecenco/vm-device.git", branch = "send" }
 vm-memory = { version = "0.3.0", features = ["backend-mmap"] }
 vm-superio = "0.1.1"
+vm-virtio = { git = "https://github.com/alexandruag/vm-virtio.git", branch = "proto_wip" }
 vmm-sys-util = "0.6.1"
 
 libc = "0.2.76"
