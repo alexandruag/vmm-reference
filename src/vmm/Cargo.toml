@@ -5,7 +5,7 @@ authors = ["rust-vmm AWS maintainers <rust-vmm-maintainers@amazon.com>"]
 edition = "2018"
 
 [dependencies]
-event-manager = "0.2.0"
+event-manager = { git = "https://github.com/alexandruag/event-manager.git", branch = "fix", features = ["remote_endpoint"] }
 kvm-bindings = { version = "0.3.0", features = ["fam-wrappers"] }
 kvm-ioctls = "0.5.0"
 linux-loader = "0.2.0"

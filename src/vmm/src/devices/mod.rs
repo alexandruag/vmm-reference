@@ -3,7 +3,7 @@
 
 #![cfg(target_arch = "x86_64")]
 
-mod block;
+pub mod virtio;
 
 use std::convert::TryInto;
 use std::io::{stdin, Read, Write};

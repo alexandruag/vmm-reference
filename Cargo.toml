@@ -10,3 +10,11 @@ vmm = { path = "src/vmm" }
 cli = { path = "src/cli" }
 
 [workspace]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"

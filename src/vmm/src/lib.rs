@@ -13,7 +13,7 @@ use std::io::{self, stdin, stdout};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use event_manager::{EventManager, MutEventSubscriber, SubscriberOps};
+use event_manager::{EventManager, MutEventSubscriber, RemoteEndpoint, SubscriberOps};
 use kvm_bindings::{
     kvm_pit_config, kvm_userspace_memory_region, CpuId, KVM_API_VERSION, KVM_MAX_CPUID_ENTRIES,
     KVM_PIT_SPEAKER_DUMMY,
@@ -28,7 +28,8 @@ use linux_loader::configurator::{
     self, linux::LinuxBootConfigurator, BootConfigurator, BootParams,
 };
 use linux_loader::loader::{self, elf::Elf, load_cmdline, KernelLoader, KernelLoaderResult};
-use vm_device::device_manager::IoManager;
+use vm_device::bus::{MmioAddress, MmioRange};
+use vm_device::device_manager::{IoManager, MmioManager};
 use vm_device::resources::Resource;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
@@ -43,6 +44,7 @@ mod config;
 pub use config::*;
 
 mod devices;
+use devices::virtio::block::Block;
 use devices::SerialWrapper;
 
 mod vcpu;
@@ -104,7 +106,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// A live VMM.
 pub struct VMM {
-    vm_fd: VmFd,
+    vm_fd: Arc<VmFd>,
     kvm: Kvm,
     guest_memory: GuestMemoryMmap,
     // An Option, of all things, because it needs to be mutable while adding devices (so it can't
@@ -115,6 +117,7 @@ pub struct VMM {
     // perspective, and a dyn MutEventSubscriber from EventManager's) is managed by the 2 entities,
     // and isn't Copy-able; so once one of them gets ownership, the other one can't anymore.
     event_mgr: EventManager<Arc<Mutex<dyn MutEventSubscriber>>>,
+    endpoint: RemoteEndpoint<Box<dyn MutEventSubscriber + Send>>,
     vcpus: Vec<Vcpu>,
 }
 
@@ -130,7 +133,13 @@ impl VMM {
         }
 
         // Create fd for interacting with kvm-vm specific functions.
-        let vm_fd = kvm.create_vm().map_err(Error::KvmIoctl)?;
+        let vm_fd = Arc::new(kvm.create_vm().map_err(Error::KvmIoctl)?);
+
+        let mut other_mgr = EventManager::new().map_err(Error::EventManager)?;
+        let endpoint = other_mgr.remote_endpoint();
+        thread::spawn(move || loop {
+            other_mgr.run().expect("noooooo");
+        });
 
         let vmm = VMM {
             vm_fd,
@@ -138,6 +147,7 @@ impl VMM {
             guest_memory: GuestMemoryMmap::default(),
             device_mgr: Some(IoManager::new()),
             event_mgr: EventManager::new().map_err(Error::EventManager)?,
+            endpoint,
             vcpus: vec![],
         };
 
@@ -236,10 +246,19 @@ impl VMM {
         bootparams.hdr.cmdline_size = kernel_cfg.cmdline.len() as u32 + 1;
 
         // Load the kernel command line into guest memory.
-        let mut cmdline = Cmdline::new(kernel_cfg.cmdline.len() + 1);
+        let mut cmdline = Cmdline::new(kernel_cfg.cmdline.len() + 70);
         cmdline
             .insert_str(kernel_cfg.cmdline)
             .map_err(Error::Cmdline)?;
+
+        // TODO: block!
+        cmdline
+            .insert_str(format!(
+                "virtio_mmio.device=4K@0x{:x}:5 root=/dev/vda",
+                MMIO_MEM_START
+            ))
+            .map_err(Error::Cmdline)?;
+
         load_cmdline(
             &self.guest_memory,
             GuestAddress(CMDLINE_START),
@@ -269,7 +288,9 @@ impl VMM {
         // It sets up the virtual IOAPIC, virtual PIC, and sets up the future vCPUs for local APIC.
         // When in doubt, look in the kernel for `KVM_CREATE_IRQCHIP`.
         // https://elixir.bootlin.com/linux/latest/source/arch/x86/kvm/x86.c
-        self.vm_fd.create_irq_chip().map_err(Error::KvmIoctl)?;
+
+        // Creating b4 setting up the irqfds now.
+        // self.vm_fd.create_irq_chip().map_err(Error::KvmIoctl)?;
 
         // Set up the speaker PIT, because some kernels are musical and access the speaker port
         // during boot. Without this, KVM would continuously exit to userspace.
@@ -310,6 +331,25 @@ impl VMM {
 
         // Hook it to event management.
         self.event_mgr.add_subscriber(serial);
+
+        Ok(())
+    }
+
+    fn temp_add_devs(&mut self) -> Result<()> {
+        let mem = Arc::new(self.guest_memory.clone());
+        let endpoint = self.endpoint.clone();
+
+        let b = Block::new(mem, endpoint, self.vm_fd.clone());
+        let a = Arc::new(Mutex::new(b));
+
+        self.device_mgr
+            .as_mut()
+            .unwrap()
+            .register_mmio(
+                MmioRange::new(MmioAddress(MMIO_MEM_START), 0x1000).unwrap(),
+                a,
+            )
+            .unwrap();
 
         Ok(())
     }
@@ -420,6 +460,8 @@ impl TryFrom<VMMConfig> for VMM {
     fn try_from(config: VMMConfig) -> Result<Self> {
         let mut vmm = VMM::new()?;
         vmm.configure_guest_memory(config.memory_config)?;
+        vmm.vm_fd.create_irq_chip().map_err(Error::KvmIoctl)?;
+        vmm.temp_add_devs();
         let kernel_load = vmm.configure_kernel(config.kernel_config)?;
         vmm.configure_pio_devices()?;
         vmm.configure_vcpus(config.vcpu_config, kernel_load.kernel_load)?;
