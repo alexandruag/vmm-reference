@@ -1,3 +1,6 @@
+// Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0 OR BSD-3-Clause
+
 mod request;
 
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -13,13 +16,11 @@ use vm_memory::{Bytes, GuestAddressSpace};
 use vm_virtio::device::{VirtioConfig, VirtioMmioDevice, WithVirtioConfig};
 use vm_virtio::Queue;
 use vmm_sys_util::epoll::EventSet;
-use vmm_sys_util::eventfd::{EventFd, EFD_CLOEXEC};
+use vmm_sys_util::eventfd::{EventFd, EFD_NONBLOCK};
 
-use super::{VIRTIO_F_VERSION_1, VIRTIO_MMIO_INT_VRING};
+use super::{BLOCK_DEVICE_ID, VIRTIO_F_VERSION_1, VIRTIO_MMIO_INT_VRING};
 
 use self::request::{DiskProperties, Request};
-
-const BLOCK_DEVICE_ID: u32 = 2;
 
 const VIRTIO_BLK_F_FLUSH: u64 = 1 << 9;
 
@@ -42,7 +43,7 @@ impl<M: GuestAddressSpace + Clone> Block<M> {
         // TODO: populate features (at least the version_1 feature)!
         let device_features = VIRTIO_F_VERSION_1 | VIRTIO_BLK_F_FLUSH;
         // TODO: make configurable
-        let queue_max_size = 128;
+        let queue_max_size = 256;
 
         let config_space = DiskProperties::new("disk.ext4".to_owned(), false)
             .expect("nooo")
@@ -66,7 +67,7 @@ impl<M: GuestAddressSpace + Clone> Block<M> {
             interrupt_status: Arc::new(AtomicU8::new(0)),
         };
 
-        let irqfd = EventFd::new(EFD_CLOEXEC).expect("noooo");
+        let irqfd = EventFd::new(EFD_NONBLOCK).expect("noooo");
         // hardcoded 5;
         vm_fd.register_irqfd(&irqfd, 5).expect("boooooo");
 
@@ -94,7 +95,7 @@ impl<M: GuestAddressSpace + Clone + Send + 'static> WithVirtioConfig<M> for Bloc
 
     fn activate(&mut self) {
         println!("IM ACTIVATING");
-        let ioeventfd = EventFd::new(EFD_CLOEXEC).expect("nooooo");
+        let ioeventfd = EventFd::new(EFD_NONBLOCK).expect("nooooo");
         // hardcody; register ioeventfds
         self.vm_fd
             .register_ioevent(
@@ -136,7 +137,7 @@ impl<M: GuestAddressSpace + Clone + Send + 'static> WithVirtioConfig<M> for Bloc
     // }
 }
 
-// At this point, `SomeDevice` implements `VirtioDevice` and `VirtioMmioDevice` due to the
+// At this point, `Block` implements `VirtioDevice` and `VirtioMmioDevice` due to the
 // automatic implementations enabled by `WithVirtioConfig`.
 
 // Since `SomeDevice` implements `VirtioMmioDevice`, we can easily add a MMIO bus device

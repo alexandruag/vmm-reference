@@ -45,6 +45,7 @@ pub use config::*;
 
 mod devices;
 use devices::virtio::block::Block;
+use devices::virtio::net::Net;
 use devices::SerialWrapper;
 
 mod vcpu;
@@ -246,7 +247,7 @@ impl VMM {
         bootparams.hdr.cmdline_size = kernel_cfg.cmdline.len() as u32 + 1;
 
         // Load the kernel command line into guest memory.
-        let mut cmdline = Cmdline::new(kernel_cfg.cmdline.len() + 70);
+        let mut cmdline = Cmdline::new(kernel_cfg.cmdline.len() + 120);
         cmdline
             .insert_str(kernel_cfg.cmdline)
             .map_err(Error::Cmdline)?;
@@ -256,6 +257,14 @@ impl VMM {
             .insert_str(format!(
                 "virtio_mmio.device=4K@0x{:x}:5 root=/dev/vda",
                 MMIO_MEM_START
+            ))
+            .map_err(Error::Cmdline)?;
+
+        // TODO: net!
+        cmdline
+            .insert_str(format!(
+                "virtio_mmio.device=4K@0x{:x}:6",
+                MMIO_MEM_START + 0x1000
             ))
             .map_err(Error::Cmdline)?;
 
@@ -337,17 +346,34 @@ impl VMM {
 
     fn temp_add_devs(&mut self) -> Result<()> {
         let mem = Arc::new(self.guest_memory.clone());
-        let endpoint = self.endpoint.clone();
 
-        let b = Block::new(mem, endpoint, self.vm_fd.clone());
-        let a = Arc::new(Mutex::new(b));
+        let b = Arc::new(Mutex::new(Block::new(
+            mem.clone(),
+            self.endpoint.clone(),
+            self.vm_fd.clone(),
+        )));
+
+        let n = Arc::new(Mutex::new(Net::new(
+            mem,
+            self.endpoint.clone(),
+            self.vm_fd.clone(),
+        )));
 
         self.device_mgr
             .as_mut()
             .unwrap()
             .register_mmio(
                 MmioRange::new(MmioAddress(MMIO_MEM_START), 0x1000).unwrap(),
-                a,
+                b,
+            )
+            .unwrap();
+
+        self.device_mgr
+            .as_mut()
+            .unwrap()
+            .register_mmio(
+                MmioRange::new(MmioAddress(MMIO_MEM_START + 0x1000), 0x1000).unwrap(),
+                n,
             )
             .unwrap();
 
