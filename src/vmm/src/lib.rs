@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use event_manager::{EventManager, MutEventSubscriber, SubscriberOps};
 use kvm_bindings::{KVM_API_VERSION, KVM_MAX_CPUID_ENTRIES};
 use kvm_ioctls::{
-    Cap::{self, Ioeventfd, Irqchip, Irqfd, UserMemory},
+    Cap::{self, Ioeventfd, Irqchip, Irqfd, UserMemory, XenHvm},
     Kvm,
 };
 use linux_loader::bootparam::boot_params;
@@ -419,7 +419,7 @@ impl VMM {
     }
 
     fn check_kvm_capabilities(kvm: &Kvm) -> Result<()> {
-        let capabilities = vec![Irqchip, Ioeventfd, Irqfd, UserMemory];
+        let capabilities = vec![Irqchip, Ioeventfd, Irqfd, UserMemory, XenHvm];
 
         // Check that all desired capabilities are supported.
         if let Some(c) = capabilities

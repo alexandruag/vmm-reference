@@ -5,7 +5,9 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use kvm_bindings::{kvm_pit_config, kvm_userspace_memory_region, KVM_PIT_SPEAKER_DUMMY};
+use kvm_bindings::{
+    kvm_pit_config, kvm_userspace_memory_region, kvm_xen_hvm_config, KVM_PIT_SPEAKER_DUMMY,
+};
 use kvm_ioctls::{Kvm, VmFd};
 use vm_device::device_manager::IoManager;
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
@@ -75,6 +77,21 @@ impl KvmVm {
         mptable::setup_mptable(guest_memory, vm.state.num_vcpus).map_err(Error::Mptable)?;
 
         vm.setup_irq_controller()?;
+
+        // Some quick Xen-related setup.
+        const XEN_PVHVM_MSR_BASE: u32 = 0x800_0000;
+        const KVM_XEN_HVM_CONFIG_INTERCEPT_HCALL: u32 = 1u32 << 1;
+
+        let mut cfg = kvm_xen_hvm_config::default();
+        cfg.msr = XEN_PVHVM_MSR_BASE;
+        cfg.flags = KVM_XEN_HVM_CONFIG_INTERCEPT_HCALL;
+        vm.fd.xen_hvm_config(&cfg).unwrap();
+
+        let mut ha = kvm_bindings::kvm_xen_hvm_attr::default();
+        // We assume longmode (TYPE_LONGMODE = 0).
+        ha.type_ = 0;
+        ha.u.long_mode = 1;
+        vm.fd.xen_hvm_set_attr(&ha).unwrap();
 
         Ok(vm)
     }
@@ -148,7 +165,8 @@ impl KvmVm {
         // Require specific `GuestMemory` impl here while experimenting with Xen stuff.
         memory: &GuestMemoryMmap,
     ) -> Result<()> {
-        let vcpu = KvmVcpu::new(&self.fd, bus, vcpu_state, memory).map_err(Error::CreateVcpu)?;
+        let vcpu =
+            KvmVcpu::new(self.fd.clone(), bus, vcpu_state, memory).map_err(Error::CreateVcpu)?;
         self.vcpus.push(vcpu);
         Ok(())
     }
