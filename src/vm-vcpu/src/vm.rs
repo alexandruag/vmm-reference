@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 use kvm_bindings::{kvm_pit_config, kvm_userspace_memory_region, KVM_PIT_SPEAKER_DUMMY};
 use kvm_ioctls::{Kvm, VmFd};
 use vm_device::device_manager::IoManager;
-use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryRegion};
+use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::vcpu::{self, mptable, KvmVcpu, VcpuState};
@@ -141,11 +141,12 @@ impl KvmVm {
     }
 
     /// Create a Vcpu based on the passed configuration.
-    pub fn create_vcpu<M: GuestMemory>(
+    pub fn create_vcpu(
         &mut self,
         bus: Arc<Mutex<IoManager>>,
         vcpu_state: VcpuState,
-        memory: &M,
+        // Require specific `GuestMemory` impl here while experimenting with Xen stuff.
+        memory: &GuestMemoryMmap,
     ) -> Result<()> {
         let vcpu = KvmVcpu::new(&self.fd, bus, vcpu_state, memory).map_err(Error::CreateVcpu)?;
         self.vcpus.push(vcpu);

@@ -5,11 +5,11 @@ use std::io::{self, stdin};
 use std::result;
 use std::sync::{Arc, Mutex};
 
-use kvm_bindings::{kvm_fpu, kvm_regs, CpuId, Msrs};
+use kvm_bindings::{kvm_fpu, kvm_regs, kvm_translation, CpuId, Msrs};
 use kvm_ioctls::{VcpuExit, VcpuFd, VmFd};
 use vm_device::bus::{MmioAddress, PioAddress};
 use vm_device::device_manager::{IoManager, MmioManager, PioManager};
-use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryError};
+use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap};
 use vmm_sys_util::terminal::Terminal;
 
 mod gdt;
@@ -71,21 +71,24 @@ pub struct KvmVcpu {
     device_mgr: Arc<Mutex<IoManager>>,
     state: VcpuState,
     running: bool,
+    // Temporarily adding this here while experimenting with Xen stuff.
+    mem: GuestMemoryMmap,
 }
 
 impl KvmVcpu {
     /// Create a new vCPU.
-    pub fn new<M: GuestMemory>(
+    pub fn new(
         vm_fd: &VmFd,
         device_mgr: Arc<Mutex<IoManager>>,
         state: VcpuState,
-        memory: &M,
+        memory: &GuestMemoryMmap,
     ) -> Result<Self> {
         let vcpu = KvmVcpu {
             vcpu_fd: vm_fd.create_vcpu(state.id).map_err(Error::KvmIoctl)?,
             device_mgr,
             state,
             running: false,
+            mem: memory.clone(),
         };
 
         vcpu.configure_cpuid(&vcpu.state.cpuid)?;
@@ -322,5 +325,71 @@ impl KvmVcpu {
         }
 
         Ok(())
+    }
+
+    pub fn copy_from_gva<T>(&self, gva: u64, obj: &mut T) {
+        const PAGE_SIZE: u64 = 4096;
+
+        let mut left = std::mem::size_of::<T>();
+
+        // Hacky.
+        let buf = unsafe { std::slice::from_raw_parts_mut(obj as *mut T as *mut u8, left) };
+
+        let mut i = 0;
+        while left > 0 {
+            let mut t = kvm_translation {
+                linear_address: gva + i as u64,
+                ..Default::default()
+            };
+
+            let mut len = (PAGE_SIZE - (t.linear_address & (PAGE_SIZE - 1))) as usize;
+            if len > left {
+                len = left;
+            }
+
+            // Unwrap ...
+            self.vcpu_fd.translate(&mut t).unwrap();
+
+            // Unwrap ...
+            self.mem
+                .read_slice(&mut buf[i..i + len], GuestAddress(t.physical_address))
+                .unwrap();
+
+            i += len;
+            left -= len;
+        }
+    }
+
+    pub fn copy_to_gva<T>(&self, gva: u64, obj: &T) {
+        const PAGE_SIZE: u64 = 4096;
+
+        let mut left = std::mem::size_of::<T>();
+
+        // Hacky.
+        let buf = unsafe { std::slice::from_raw_parts(obj as *const T as *const u8, left) };
+
+        let mut i = 0;
+        while left > 0 {
+            let mut t = kvm_translation {
+                linear_address: gva + i as u64,
+                ..Default::default()
+            };
+
+            let mut len = (PAGE_SIZE - (t.linear_address & (PAGE_SIZE - 1))) as usize;
+            if len > left {
+                len = left;
+            }
+
+            // Unwrap ...
+            self.vcpu_fd.translate(&mut t).unwrap();
+
+            // Unwrap ...
+            self.mem
+                .write_slice(&buf[i..i + len], GuestAddress(t.physical_address))
+                .unwrap();
+
+            i += len;
+            left -= len;
+        }
     }
 }

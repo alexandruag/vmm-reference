@@ -25,6 +25,8 @@ panic = "abort"
 # We need these patches until the latest changes get released.
 [patch.crates-io]
 event-manager = { git = "https://github.com/rust-vmm/event-manager.git", rev = "19ddbaa" }
+kvm-bindings = { git = "https://github.com/alexandruag/kvm-bindings.git", branch = "xen" }
+kvm-ioctls = { git = "https://github.com/alexandruag/kvm-ioctls.git", branch = "xen" }
 linux-loader = { git = "https://github.com/rust-vmm/linux-loader.git", rev ="acf9c21"}
 
 [patch."https://github.com/rust-vmm/vm-virtio.git"]
