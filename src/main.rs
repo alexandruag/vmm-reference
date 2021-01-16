@@ -5,12 +5,19 @@ use std::convert::TryFrom;
 #[cfg(target_arch = "x86_64")]
 use std::env;
 
+use simple_logger::SimpleLogger;
+
 #[cfg(target_arch = "x86_64")]
 use api::CLI;
 #[cfg(target_arch = "x86_64")]
 use vmm::VMM;
 
 fn main() {
+    SimpleLogger::new()
+        .with_level(log::LevelFilter::Trace)
+        .init()
+        .unwrap();
+
     #[cfg(target_arch = "x86_64")]
     {
         match CLI::launch(

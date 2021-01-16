@@ -6,6 +6,9 @@ edition = "2018"
 license = "Apache-2.0 OR BSD-3-Clause"
 
 [dependencies]
+log = "0.4.6"
+simple_logger = "1.11.0"
+
 vmm = { path = "src/vmm" }
 api = { path = "src/api" }
 
